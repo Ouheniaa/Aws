@@ -1,0 +1,70 @@
+Resources:
+ MyAutoScaling:
+   Type: AWS::AutoScaling::LaunchConfiguration
+   Metadata:
+      AWS::CloudFormation::Init: #I'm using cfn-init for its simplicity and to vary with UserData. However cfn-init is pre-installed Amazon distro, that's why I chose one of its AMI.
+        config:
+          packages: 
+            yum:
+             httpd: []
+             firewalld: []
+          commands:
+            mycom1:
+              command: "systemctl enable httpd firewalld"
+            mycom2:
+              command: "systemctl start httpd firewalld"
+            mycom3:
+              command: "firewall-cmd --add-service=http --permanent && firewall-cmd --reload"
+   Properties:
+     ImageId: "ami-026dea5602e368e96"
+     InstanceType: t2.micro 
+     KeyName: MyKeyPair #This is the name of my key pair.
+     UserData:
+          Fn::Base64: #As the input has to be in Base64, I'm then using the intrinsic function Base64.
+              Fn::Sub: | #The reddish pipe is meant to be used to write normally without thinking to use for example "\n". 
+                    #!/bin/bash -xe
+                    /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyAutoScaling --region ${AWS::Region} 
+                    touch /etc/httpd/conf.d/mywebserver.conf
+                    cat > /var/www/html/index.html <<EOF
+                    <!DOCTYPE html>
+                    <html>
+                    <body>
+                    <h1>LinkedIn -- AWS</h1>
+                    <p>Salam. This is a YAML template used for CloudFormation</p>
+                    </body>
+                    </html>
+                    EOF
+                    cat > /etc/httpd/conf.d/mywebserver.conf <<EOF
+                    <VirtualHost *:80>
+                    DocumentRoot "/var/www/html/"
+                    ServerName linkedinaws.site
+                    </VirtualHost>
+                    EOF
+                    systemctl restart httpd
+                           
+     
+    SecurityGroups:
+         - !Ref MySG #SG for SecurityGroup, I'll be authorizing SSH access to my instance. NB: !Ref <= to say it will be taken as a reference for deep details.  MySG: #Here, I'm detailing my SecurityGroup parameters. 
+ MySG: #Here, I'm detailing my SecurityGroup parameters.   
+   Type: AWS::EC2::SecurityGroup
+   Properties:
+       GroupDescription: I am giving INBOUND SSH/HTTP access 
+       SecurityGroupIngress:
+        - IpProtocol: tcp 
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0 #I'm allowing access from everywhere.  
+        - IpProtocol: tcp 
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0 #I'm allowing access from everywhere.  
+
+ MyServerGroup:
+   Type: AWS::AutoScaling::AutoScalingGroup
+   Properties:
+     AvailabilityZones:
+       Fn::GetAZs: '' #This is another intrinsic function to get my AZs.
+     LaunchConfigurationName:
+       Ref: MyAutoScaling #I'm refering to my resource which is "MyAutoScaling"
+     MinSize: '1' #I actually want to have at least one instance.
+     MaxSize: '4' #I defined the maximum at 4.
