@@ -1,0 +1,221 @@
+Resources: #OUHENIA_AREZKI
+  MyVPC:
+        Type: 'AWS::EC2::VPC'
+        Properties:
+            CidrBlock:
+                'Fn::Join': [ '/', [ '192.168.0.0', '16' ] ]
+            EnableDnsSupport: true
+            EnableDnsHostnames: true
+            InstanceTenancy: 'default'
+  
+  My1stSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: MyVPC
+      CidrBlock: 192.168.1.0/24
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs 
+  My2ndSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: MyVPC
+      CidrBlock: 192.168.2.0/24
+      AvailabilityZone: !Select 
+        - 1
+        - !GetAZs 
+  My3rdSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true
+      VpcId:
+        Ref: MyVPC
+      CidrBlock: 192.168.3.0/24
+      AvailabilityZone: !Select 
+        - 2
+        - !GetAZs 
+   
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  MyGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            InternetGatewayId:
+                Ref: 'MyInternetGateway'
+            VpcId:
+                Ref: 'MyVPC'
+  
+  MyRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties: 
+        VpcId: 
+          Ref: MyVPC
+  MyRoute:
+        DependsOn:
+            - MyInternetGateway
+        Type: AWS::EC2::Route
+        Properties:
+            DestinationCidrBlock: '0.0.0.0/0'
+            GatewayId:
+                Ref: 'MyInternetGateway'
+            RouteTableId:
+                Ref: 'MyRouteTable'
+
+  My1stSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: My1stSubnet
+      RouteTableId:
+        Ref: MyRouteTable
+  My2ndSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: My2ndSubnet
+      RouteTableId:
+        Ref: MyRouteTable
+  My3rdSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: My3rdSubnet
+      RouteTableId:
+        Ref: MyRouteTable
+
+  MyASGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      LaunchConfigurationName: 
+        Ref: MyLaunchConfig
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      AvailabilityZones:
+        Fn::GetAZs: ''
+      MinSize: '2'
+      MaxSize: '4'
+      VPCZoneIdentifier:
+        - Ref: My1stSubnet
+        - Ref: My2ndSubnet
+        - Ref: My3rdSubnet
+      TargetGroupARNs: 
+        - Ref: MyALBTargetGroup
+
+  MyLaunchConfig: 
+        Type: AWS::AutoScaling::LaunchConfiguration
+        Metadata:
+            AWS::CloudFormation::Init: .
+              config:
+                packages: 
+                  yum:
+                   httpd: []
+                   firewalld: []
+                commands:
+                  mycom1:
+                    command: "systemctl enable httpd firewalld"
+                  mycom2:
+                    command: "systemctl start httpd firewalld"
+                  mycom3:
+                    command: "firewall-cmd --add-service=http --permanent && firewall-cmd --reload"
+        Properties:
+           ImageId: "ami-026dea5602e368e96"
+           InstanceType: t2.micro 
+           AssociatePublicIpAddress: true
+           SecurityGroups:
+               - !Ref InstanceSecurityGroup
+
+           KeyName: MyKeyPair 
+           UserData:
+                Fn::Base64: 
+                    Fn::Sub: |
+                          #!/bin/bash -xe
+                          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyLaunchConfig --region ${AWS::Region} 
+                          touch /etc/httpd/conf.d/mywebserver.conf
+                          cat > /var/www/html/index.html <<EOF
+                          <!DOCTYPE html>
+                          <html>
+                          <body>
+                          <h1>LinkedIn -- AWS</h1>
+                          <p>Salam. This is a YAML template used for CloudFormation</p>
+                          </body>
+                          </html>
+                          EOF
+                          cat > /etc/httpd/conf.d/mywebserver.conf <<EOF
+                          <VirtualHost *:80>
+                          DocumentRoot "/var/www/html/"
+                          ServerName linkedinaws.site
+                          </VirtualHost>
+                          EOF
+                          systemctl restart httpd
+
+ 
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Authorize HTTP from ALB.
+      VpcId:
+           Ref: MyVPC
+      SecurityGroupIngress:
+         - IpProtocol: tcp 
+           FromPort: '80'
+           ToPort: '80'
+           SourceSecurityGroupId:
+              Ref: MyALBSecurityGroup
+         - IpProtocol: tcp 
+           FromPort: '22'
+           ToPort: '22'
+           CidrIp: 0.0.0.0/0
+           
+  
+  MyALBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allowing HTTP from everywhere'
+      VpcId:
+          Ref: MyVPC
+      SecurityGroupIngress:
+         - IpProtocol: tcp
+           FromPort: 80
+           ToPort: 80
+           CidrIp: 0.0.0.0/0
+  
+  MyALB:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - Ref: My1stSubnet
+        - Ref: My2ndSubnet
+        - Ref: My3rdSubnet
+      SecurityGroups:
+        - !Ref MyALBSecurityGroup      
+  
+  MyALBTargetGroup: 
+      Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+      Properties:
+        TargetType: instance
+        HealthCheckIntervalSeconds: 15
+        HealthCheckProtocol: HTTP
+        HealthCheckTimeoutSeconds: 10
+        HealthyThresholdCount: 2
+        UnhealthyThresholdCount: 2
+        Port: 80
+        Protocol: HTTP
+        VpcId:
+          Ref: 'MyVPC'
+  
+  MyALBListener:
+      Type: 'AWS::ElasticLoadBalancingV2::Listener'
+      Properties:
+        DefaultActions:
+        - TargetGroupArn: !Ref MyALBTargetGroup
+          Type: forward
+        LoadBalancerArn: !Ref MyALB
+        Port: 80
+        Protocol: HTTP
