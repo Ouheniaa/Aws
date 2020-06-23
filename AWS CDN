@@ -1,0 +1,143 @@
+Resources:
+  MyS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
+    DeletionPolicy: Delete
+  MyS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              CanonicalUser:
+                Fn::GetAtt: [ MyCFOAI , S3CanonicalUserId ]
+            Action:
+              - s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::${MyS3Bucket}/*'
+      Bucket: !Ref MyS3Bucket
+  
+  MyCFOAI:  
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties: 
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Ref MyS3Bucket
+  MyCloudFrontDist:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+        - DomainName: !GetAtt MyS3Bucket.DomainName
+          Id: MyS3Origin
+          CustomOriginConfig:
+            OriginProtocolPolicy: match-viewer
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - HEAD
+          - GET
+          TargetOriginId: MyS3Origin
+          ViewerProtocolPolicy: allow-all
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        PriceClass: PriceClass_All
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: blacklist
+            Locations:
+            - CC # --- ISO_3166-1_alpha-2
+            - FR
+            - IN
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+  MyBasicExecutionPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: LambdaBasicExecutionPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: "*"
+      Roles:
+        - !Ref MyLamdba2S3Role
+  MyLamdba2S3Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: MyLamdba2S3Policy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: !Sub 'arn:aws:s3:::${MyS3Bucket}/*'        
+  MyLamdbaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.7
+      Role: !GetAtt MyLamdba2S3Role.Arn
+      Handler: index.handler
+      Timeout: 60
+      Code:
+        ZipFile: 
+          Fn::Sub: |
+              import boto3
+              import cfnresponse
+              from botocore.vendored import requests
+              import json
+              s3 = boto3.client('s3')
+
+              htmlcode = """
+                          <html>
+                          <body>
+                          <h1>LinkedIn -- AWS</h1>
+                          <p>Salam - Hi.</p>
+
+                          <p> AWS <b>C</b>ONTENT <b>D</b>ELIVERY <b>N</b>ETWORK </p>
+                          <p>This is a YAML template used for CloudFormation</p>
+                          <p> Arezki OUHENIA -- AWS Addict </p>
+                          <p>  </p>
+                          </body>
+                          </html>
+                          """
+
+              myfile= open("/tmp/filename.html","w")
+              myfile.write(htmlcode)
+              myfile.close()
+
+              bucket='${MyS3Bucket}'
+              def handler(event, context):
+                 
+                  
+                  try:
+                        if event['RequestType'] == 'Create':
+                            s3.upload_file('/tmp/filename.html', bucket, 'index.html', ExtraArgs={'ACL': 'public-read', 'Metadata': {'Content-Type': 'text/html'}})
+                            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                            return
+
+                        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  except Exception:
+                        
+                        cfnresponse.send(event, context, cfnresponse.FAILED, {})
+                
+              
+  InvokeMyLambdaFunction:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt MyLamdbaFunction.Arn
