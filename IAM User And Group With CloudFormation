@@ -1,0 +1,25 @@
+Parameters:
+  MyPass:
+    Type: String
+Resources:
+  MyIAMUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Join ["-", [ !Ref "AWS::Region", "User1" ]]
+      LoginProfile:
+        Password: !Ref MyPass
+      Groups:
+        - !Sub '${MyIAMGroup}'
+    DependsOn: MyIAMGroup
+  MyIAMGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Join ["-", [ !Ref "AWS::Region", "Group1" ]]
+      Policies:
+        - PolicyName: MyVideoPolicy
+          PolicyDocument:
+             Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:Get*
+                  Resource: "*"
